@@ -84,6 +84,8 @@ class BaseAlgo(ABC):
         if self.acmodel.recurrent:
             self.memory = torch.zeros(shape[1], self.acmodel.memory_size, device=self.device)
             self.memories = torch.zeros(*shape, self.acmodel.memory_size, device=self.device)
+            self.prev_action = torch.zeros(shape[1], device=self.device, dtype=torch.int)
+            self.prev_actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
         self.mask = torch.ones(shape[1], device=self.device)
         self.masks = torch.zeros(*shape, device=self.device)
         self.actions = torch.zeros(*shape, device=self.device, dtype=torch.int)
@@ -130,7 +132,7 @@ class BaseAlgo(ABC):
             preprocessed_obs = self.preprocess_obss(self.obs, device=self.device)
             with torch.no_grad():
                 if self.acmodel.recurrent:
-                    dist, value, memory = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))
+                    dist, value, memory = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1), last_action=self.prev_action)
                 else:
                     dist, value = self.acmodel(preprocessed_obs)
             action = dist.sample()
@@ -139,12 +141,13 @@ class BaseAlgo(ABC):
             done = tuple(a | b for a, b in zip(terminated, truncated))
 
             # Update experiences values
-
             self.obss[i] = self.obs
             self.obs = obs
             if self.acmodel.recurrent:
                 self.memories[i] = self.memory
                 self.memory = memory
+                self.prev_actions[i] = self.prev_action
+                self.prev_action = action.detach()
             self.masks[i] = self.mask
             self.mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
             self.actions[i] = action
@@ -176,11 +179,10 @@ class BaseAlgo(ABC):
             self.log_episode_num_frames *= self.mask
 
         # Add advantage and return to experiences
-
         preprocessed_obs = self.preprocess_obss(self.obs, device=self.device)
         with torch.no_grad():
             if self.acmodel.recurrent:
-                _, next_value, _ = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))
+                _, next_value, _ = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1), last_action=self.prev_action)
             else:
                 _, next_value = self.acmodel(preprocessed_obs)
 
@@ -207,10 +209,16 @@ class BaseAlgo(ABC):
         if self.acmodel.recurrent:
             # T x P x D -> P x T x D -> (P * T) x D
             exps.memory = self.memories.transpose(0, 1).reshape(-1, *self.memories.shape[2:])
+            exps.prev_action = self.prev_actions.transpose(0, 1).reshape(-1, *self.prev_actions.shape[2:])
             # T x P -> P x T -> (P * T) x 1
             exps.mask = self.masks.transpose(0, 1).reshape(-1).unsqueeze(1)
         # for all tensors below, T x P -> P x T -> P * T
         exps.action = self.actions.transpose(0, 1).reshape(-1)
+        # prev_actions = torch.cat([-1* torch.ones_like(self.actions[0:1, :]), self.actions[1:, :]], dim=0)
+        # exps.prev_action = torch.randint(low=0, high=4, size=exps.action.shape, device=exps.action.device)
+        # exps.prev_action = prev_actions.transpose(0, 1).reshape(-1)
+        # prev_rewards = torch.cat([torch.zeros_like(self.rewards[0:1, :]), self.rewards[1:, :]], dim=0)
+        # exps.prev_reward = prev_rewards.transpose(0, 1).reshape(-1)
         exps.value = self.values.transpose(0, 1).reshape(-1)
         exps.reward = self.rewards.transpose(0, 1).reshape(-1)
         exps.advantage = self.advantages.transpose(0, 1).reshape(-1)
