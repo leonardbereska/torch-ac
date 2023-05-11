@@ -35,6 +35,7 @@ class A2CAlgo(BaseAlgo):
 
         if self.acmodel.recurrent:
             memory = exps.memory[inds]
+            prev_action = exps.prev_action[inds]
 
         for i in range(self.recurrence):
             # Create a sub-batch of experience
@@ -44,7 +45,7 @@ class A2CAlgo(BaseAlgo):
             # Compute loss
 
             if self.acmodel.recurrent:
-                dist, value, memory = self.acmodel(sb.obs, memory * sb.mask)
+                dist, value, memory = self.acmodel(sb.obs, memory * sb.mask, prev_action)
             else:
                 dist, value = self.acmodel(sb.obs)
 
